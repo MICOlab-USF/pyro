@@ -1,0 +1,26 @@
+---
+title: "Pyro Growth Curves"
+output: html_notebook
+---
+
+Packages:
+```{r, warning=FALSE, message=FALSE}
+#install.packages("googlesheets4")
+library(googlesheets4) #scrapes google sheets
+library(dplyr) # dataframe manipulation
+library(ggplot2) # plotting package
+library(lubridate)
+library(tidyverse)
+library(scales)
+```
+
+
+```{r}
+fluor<-as.data.frame(read_sheet("https://docs.google.com/spreadsheets/d/1iD3GXey2Rg31hJI7V125ByjyR8TPvAD1kbDD4dR87VE/edit?usp=sharing"))
+fluor$Date <- ymd(fluor$Date)
+```
+
+```{r}
+fluor %>% ggplot(aes(x=Date, y = RFU, color = Treatment)) + geom_point() + facet_grid(~Treatment)
+```
+
