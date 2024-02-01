@@ -1,6 +1,8 @@
 ---
 title: "Pyro Growth Curves"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 Packages:
@@ -21,6 +23,6 @@ fluor$Date <- ymd(fluor$Date)
 ```
 
 ```{r}
-fluor %>% ggplot(aes(x=Date, y = RFU, color = Treatment)) + geom_point() + facet_grid(~Treatment)
+fluor %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Round~Treatment, scales = "free_x")
 ```
 
