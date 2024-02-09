@@ -21,8 +21,6 @@ library(scales)
 fluor<-as.data.frame(read_sheet("https://docs.google.com/spreadsheets/d/1iD3GXey2Rg31hJI7V125ByjyR8TPvAD1kbDD4dR87VE/edit?usp=sharing"))
 fluor$Time_point <- as.numeric(sub('.', '', fluor$Time_point))
 fluor$Date <- ymd(fluor$Date)
-
-
 ```
 
 ```{r}
