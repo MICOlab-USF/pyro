@@ -19,10 +19,18 @@ library(scales)
 
 ```{r}
 fluor<-as.data.frame(read_sheet("https://docs.google.com/spreadsheets/d/1iD3GXey2Rg31hJI7V125ByjyR8TPvAD1kbDD4dR87VE/edit?usp=sharing"))
+fluor$Time_point <- as.numeric(sub('.', '', fluor$Time_point))
 fluor$Date <- ymd(fluor$Date)
+
+
 ```
 
 ```{r}
-fluor %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Round~Treatment, scales = "free_x")
+fluor %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Round~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
 
+
+
+```{r}
+fluor %>% filter(Round==1) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+```
