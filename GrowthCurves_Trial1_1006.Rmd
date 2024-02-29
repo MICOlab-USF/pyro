@@ -12,7 +12,7 @@ library(googlesheets4) #scrapes google sheets
 library(dplyr) # dataframe manipulation
 library(ggplot2) # plotting package
 library(lubridate)
-library(tidyverse)
+library(tidyr)
 library(scales)
 ```
 
@@ -31,4 +31,14 @@ fluor %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() +
 
 ```{r}
 fluor %>% filter(Round==1) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+```
+
+
+```{r}
+fluor %>% filter(Round==3) %>% filter(Time_point < 9)%>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+```
+
+
+```{r}
+fluor %>% filter(Round==1) %>% filter(Time_point < 9) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
