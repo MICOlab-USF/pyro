@@ -6,7 +6,7 @@ output:
 ---
 
 Packages:
-```{r, warning=FALSE, message=FALSE}
+```{r import packages, warning=FALSE, message=FALSE}
 #install.packages("googlesheets4")
 library(googlesheets4) #scrapes google sheets
 library(dplyr) # dataframe manipulation
@@ -17,28 +17,28 @@ library(scales)
 ```
 
 
-```{r}
+```{r import data}
 fluor<-as.data.frame(read_sheet("https://docs.google.com/spreadsheets/d/1iD3GXey2Rg31hJI7V125ByjyR8TPvAD1kbDD4dR87VE/edit?usp=sharing"))
 fluor$Time_point <- as.numeric(sub('.', '', fluor$Time_point))
 fluor$Date <- ymd(fluor$Date)
 ```
 
-```{r}
-fluor %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Round~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+```{r plot all samples/rounds}
+fluor %>% filter(Round %in% c(1,3,4)) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Round~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
 
 
-
+Experimental Round 1: 
 ```{r}
 fluor %>% filter(Round==1) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
 
-
+Round 3
 ```{r}
-fluor %>% filter(Round==3) %>% filter(Time_point < 9)%>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+fluor %>% filter(Round==3) %>% filter(Time_point < 13)%>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
 
-
+Round 4
 ```{r}
-fluor %>% filter(Round==1) %>% filter(Time_point < 9) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+fluor %>% filter(Round==4) %>% filter(Time_point < 10) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
