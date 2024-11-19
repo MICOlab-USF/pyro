@@ -5,7 +5,9 @@ output:
     df_print: paged
 ---
 
-Packages:
+### Packages:
+- attach all *necessary* packages
+
 ```{r import packages, warning=FALSE, message=FALSE}
 #install.packages("googlesheets4")
 library(googlesheets4) #scrapes google sheets
@@ -16,29 +18,169 @@ library(tidyr)
 library(scales)
 ```
 
-
 ```{r import data}
-fluor<-as.data.frame(read_sheet("https://docs.google.com/spreadsheets/d/1iD3GXey2Rg31hJI7V125ByjyR8TPvAD1kbDD4dR87VE/edit?usp=sharing"))
+fluor<- as.data.frame(read_sheet("https://docs.google.com/spreadsheets/d/1iD3GXey2Rg31hJI7V125ByjyR8TPvAD1kbDD4dR87VE/edit?usp=sharing"))
+
 fluor$Time_point <- as.numeric(sub('.', '', fluor$Time_point))
+
 fluor$Date <- ymd(fluor$Date)
 ```
 
 ```{r plot all samples/rounds}
-fluor %>% filter(Round %in% c(1,3,4)) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Round~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+fluor %>% filter(Round != 2) %>% ggplot( aes(x=Time_point, y = RFU, color= Treatment, shape = Treatment)) + 
+  geom_smooth(method="loess", color = "black") +
+  geom_point() +
+  theme_test() +
+  facet_grid(Round~Treatment, scales = "free") +
+  scale_x_continuous(breaks= pretty_breaks()) +
+  scale_color_manual(values = c("#E69F00", "green", "blue", "purple")) +
+  ggtitle("Lydia's Data!") +
+  theme(legend.position="bottom") +
+   xlab("Time Point")
+```
+
+```{r}
+ggsave("~/desktop/pyro/lydias_plot1.png", width = 8, height =7)
 ```
 
 
-Experimental Round 1: 
+
+Experimental Round 1:
+
 ```{r}
 fluor %>% filter(Round==1) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
 
 Round 3
+
 ```{r}
-fluor %>% filter(Round==3) %>% filter(Time_point < 13)%>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+fluor %>% filter(Round==3) %>% filter(Time_point < 20)%>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
 
 Round 4
+
 ```{r}
-fluor %>% filter(Round==4) %>% filter(Time_point < 10) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
+fluor %>% filter(Round==4) %>% filter(Time_point < 20) %>% ggplot(aes(x=Time_point, y = RFU, color = Treatment)) + geom_point() + facet_grid(Tech_Rep~Treatment, scales = "free") + scale_x_continuous(breaks= pretty_breaks())
 ```
+
+
+
+
+```{r}
+gc <- read.csv("ASA_pres - Sheet1.csv")
+names(gc)<- c("Experiment"  ,"Date" , "Time" ,  "Tech_Rep"  , "RFU" ,"Treatment", "Round" )
+gc$Tech_Rep <- as.character(gc$Tech_Rep)
+gc$Time <- as.numeric(sub('.', '', gc$Time))
+
+```
+
+
+
+```{r}
+gc %>% ggplot(aes(x = Time, y =RFU, color = Tech_Rep)) + facet_grid(Experiment~Treatment+Round, scales = "free") + geom_point()
+```
+
+
+```{r}
+gc_summarized<- gc %>%  group_by(Experiment, Treatment, Round, Tech_Rep) %>% summarise(max_biomass = max(RFU))
+```
+
+
+
+```{r}
+TreatExp_aov <- aov(max_biomass ~ Treatment + Experiment, data = gc_summarized)
+summary(TreatExp_aov)
+```
+
+```{r}
+TukeyHSD(TreatExp_aov, conf.level=.95)
+```
+
+
+
+```{r}
+gc %>% filter(Treatment %in% c("-Cobalamin", "Replete")) %>% filter(Round == 1) %>% ggplot(aes(x = Time, y =RFU, color = Tech_Rep)) + facet_grid(Experiment~Treatment+Round, scales = "free") + geom_point()
+```
+
+
+```{r}
+cob_summ<- gc %>% filter(Treatment %in% c("-Cobalamin", "Replete")) %>% filter(Round == 1) %>%  group_by(Experiment, Treatment, Round, Tech_Rep) %>% summarise(max_biomass = max(RFU))
+```
+
+
+```{r}
+TreatExp_aov <- aov(max_biomass ~ Treatment + Experiment, data = cob_summ)
+summary(TreatExp_aov)
+```
+
+```{r}
+TukeyHSD(TreatExp_aov, conf.level=.95)
+```
+
+```{r}
+cob_summ %>%  ggplot(aes(x = Treatment, y = max_biomass)) + geom_boxplot() + facet_grid(~Experiment)
+```
+
+
+```{r}
+library(growthrates)
+```
+
+```{r}
+splitdata <- multisplit(gc, c("Experiment", "Round", "Treatment", "Tech_Rep"))
+dat<- splitdata[[1]]
+```
+
+
+```{r}
+fit <- fit_easylinear(dat$Time, dat$RFU)
+```
+
+
+```{r}
+summary(fit)
+```
+```{r}
+coef(fit)
+```
+
+```{r}
+par(mfrow = c(1, 2))
+plot(fit, log = "y")
+plot(fit)
+```
+
+
+```{r}
+fitx <- fit_easylinear(dat$Time, dat$RFU, h = 8, quota = 0.95)
+plot(fit)
+lines(fitx, pch = "+", col = "blue")
+```
+
+
+
+```{r}
+pyro_line_fits <- all_easylinear(RFU ~ Time|Experiment+Round+Treatment+Tech_Rep,
+                                data = gc, h=5,  quota = 0.95)
+```
+```{r}
+par(mfrow = c(18, 6))
+par(mar = c(0.5, 0.5, 0.5, 0.5))
+plot(pyro_line_fits)
+```
+
+
+
+
+
+```{r}
+mumax_table<- results(pyro_line_fits)
+mumax_table
+```
+
+
+```{r}
+mumax_table %>%  ggplot(aes(x = Treatment, y = mumax)) + geom_boxplot() + facet_grid(Experiment~Round)
+```
+
+
