@@ -1,0 +1,742 @@
+---
+title: "PtownPyroMiah"
+author: "Maggi Brisbin"
+date: "2024-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up: import packages and functions, define colors
+```{r, message = FALSE}
+library(qiime2R)
+library(CoDaSeq)
+library(phyloseq)
+library(ggplot2)
+library(tidyr)
+library("dplyr")
+library("gridExtra")
+library(viridis)
+library(tidyr)
+library(magrittr)
+library(vegan)
+library(stringr)
+
+`%ni%` = Negate(`%in%`)
+
+colors=c('#e9e9e9','#C14450','#f0b08f','#c2aba6','#60555f','#3c6481','#9fd6e6','#256F64','#63a375')
+
+red<- c("#EB8B8E","#FBD5E2","#E7B6AF","#AC6873", "#D82354")
+orange <- c("#FAAA6D","#FECF92")
+yellow <- c("#FFC317","#F7F4B7", "#CC9C3C")
+green <- c("#16866F","#1E3F1C","#99A339","#516A65","#8BC89F")
+blue <- c("#005694","#B7E1DD","#66879E","#1BAAE2","#5FC8D8")
+purple <- c("#E7D7CE","#A699A9","#434582","#81347D", "#B5218E")
+
+colors30 <- c(blue, purple, red, yellow, orange, green, "black")
+```
+
+```{r, message=FALSE}
+scripts <- c("graphical_methods.R",
+             "tree_methods.R",
+             "plot_merged_trees.R",
+             "specificity_methods.R",
+             "ternary_plot.R",
+             "richness.R",
+             "edgePCA.R",
+             "copy_number_correction.R",
+             "import_frogs.R",
+             "prevalence.R",
+             "compute_niche.R")
+urls <- paste0("https://raw.githubusercontent.com/mahendra-mariadassou/phyloseq-extended/master/R/", scripts)
+
+for (url in urls) {
+  source(url)
+}
+```
+
+# Combined analysis
+all 16S data from the run (3 experiments)
+
+```{r}
+ps<-qza_to_phyloseq(features="dd2_PyroPtownMiah/table.qza")
+
+meta<- read.csv("SampleMetaData.csv", header = TRUE)
+meta$SampleID <- paste0(meta$SampleID, "_6283")
+row.names(meta)<- meta$SampleID
+meta$TreatRep <- paste(meta$PCRDate_Treat, meta$SampleInfo_Rep,  sep = "_")
+
+META <- sample_data(meta)
+```
+
+tax: 
+silver 138-99 taxonomy trimmed to match the primers used on samples
+```{r}
+#taxonomy <- read.csv("MERGED_taxonomy.csv", stringsAsFactors = FALSE)
+taxonomy <- read.csv("taxonomy.csv", stringsAsFactors = FALSE)
+
+names(taxonomy) <- c("row", "tax", "Confidence") #change the headers (column names)
+row.names(taxonomy) <-taxonomy[[1]] #move the feature ID column to become the row names
+taxonomy <- taxonomy[,(-1)] #delete the feature ID  column 
+taxonomy <-  separate(taxonomy, tax, c("Domain","Phylum", "Class", "Order", "Family", "Genus", "Species", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14"), sep = ";", fill = "right")
+taxonomy <- taxonomy[,c(1:7)]
+
+taxonomy$D0 <- with(taxonomy, ifelse(Order == " o__Chloroplast", "Chloroplast", "Bacteria"))
+
+col_order<- c("D0", "Domain","Phylum", "Class", "Order", "Family", "Genus", "Species" )
+taxonomy<- taxonomy[, col_order]
+
+taxmat <- as.matrix(taxonomy)
+TAX = tax_table(taxmat)
+```
+
+
+Make phyloseq object:
+```{r}
+ps = merge_phyloseq(ps, TAX, META) 
+
+```
+
+
+
+## Chloroplast sequences
+
+Plot relative abundance as stacked bar plot (all samples including chloroplast sequences):
+
+```{r, fig.width=10}
+ps<- subset_taxa(ps, D0 %in% c("Bacteria", "Chloroplast") )
+psra<- transform_sample_counts(ps, function(OTU) 100* OTU/sum(OTU))
+glomD1<- tax_glom(psra, 'D0')
+
+
+taxabarplot<-plot_bar(glomD1, x= "SampleID", fill = "D0") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=D0), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values=c("lightgrey", "#7BB03B"), name = "") + xlab("") +facet_grid(~Project, scales = "free_x") 
+
+taxabarplot
+```
+
+
+Remove chloroplast sequences from data:
+
+```{r}
+ps_nochloro <- subset_taxa(ps, Order != " o__Chloroplast" & Domain != "Unassigned")
+```
+
+
+## Rarefaction Curves
+```{r, message=FALSE, warning = FALSE}
+ggrare(ps_nochloro, step = 1000, color = "Project", label = "SampleID", se = FALSE)
+```
+ 
+## Alpha diversity
+
+### ASV Richness
+
+```{r}
+
+totalOTU <- data.frame(otu_table(ps_nochloro))
+totalOTU$rowsu <- rowSums(totalOTU)
+totalOTUnotzero <- totalOTU %>% filter(rowsu >1)
+dim(totalOTUnotzero)
+
+```
+
+
+```{r}
+plugin <- ps_nochloro %>%
+            estimate_richness(measures = "Observed") %$% Observed
+Project <- ps_nochloro %>% sample_data %$% Project
+
+
+richness<- data.frame(plugin, Project )
+names(richness) <- c("richness", "Project")
+
+
+richness %>%group_by(Project) %>% summarize(mean = mean(richness), min = min(richness), max = max(richness))
+
+```
+
+```{r}
+
+RichPlot<- richness %>% ggplot( aes(x=Project, y=richness))+geom_boxplot() + theme_bw()  +ylab("Observed Richness") +ggtitle("")+ theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +xlab("")#+ limy(0, 90)
+
+RichPlot
+```
+
+
+### Shannon Index
+
+```{r}
+plugin <- ps_nochloro  %>%
+            estimate_richness(measures = "Shannon") %$% Shannon
+shannon<- data.frame(plugin, Project)
+names(shannon) <- c("Shannon", "Project")
+
+shanPlot<- ggplot(shannon, aes(x=Project, y=Shannon))+geom_boxplot() + theme_bw()  + theme(text = element_text(size=14)) +ylab("Shannon Index") +ggtitle("") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +xlab("")
+
+shanPlot
+```
+
+## Beta Diversity
+
+### Bar Plots
+#### Order
+```{r}
+ps_nochloro_RA<- transform_sample_counts(ps_nochloro, function(OTU) 100* OTU/sum(OTU))
+
+ps_nochloro_RA_glomO<- tax_glom(ps_nochloro_RA, 'Order')
+
+```
+
+
+Pyro 
+```{r}
+
+pyro <- subset_samples(ps_nochloro_RA_glomO, Project == "Pyro")
+pyro = filter_taxa(pyro, function(x) sum(x) > 1, TRUE)
+                       
+taxabarplot<-plot_bar(pyro, x= "SampleID", fill = "Order") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Order), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 30))+ xlab("")
+
+taxabarplot
+```
+Blanks
+```{r}
+
+blank <- subset_samples(ps_nochloro_RA_glomO, Project == "blank")
+blank = filter_taxa(blank, function(x) sum(x) > 1, TRUE)
+                       
+taxabarplot<-plot_bar(blank, x= "SampleID", fill = "Order") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Order), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 30))+ xlab("")
+
+taxabarplot
+```
+
+Miah
+```{r}
+
+miah <- subset_samples(ps_nochloro_RA_glomO, Project == "Miah, Nitrogen Exp")
+miah = filter_taxa(miah, function(x) sum(x) > 1, TRUE)
+                       
+taxabarplot<-plot_bar(miah, x= "SampleID", fill = "Order") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Order), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 30))+ xlab("")
+
+taxabarplot
+```
+Ptown
+```{r}
+
+ptown <- subset_samples(ps_nochloro_RA_glomO, Project == "PTown")
+ptown = filter_taxa(ptown, function(x) sum(x) > 1, TRUE)
+                       
+taxabarplot<-plot_bar(ptown, x= "SampleID", fill = "Order") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Order), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 30))+ xlab("")
+
+taxabarplot + theme(legend.position = "none")
+```
+
+
+## Pyro
+
+```{r}
+ps_nochloro_RA<- transform_sample_counts(ps_nochloro, function(OTU) 100* OTU/sum(OTU))
+
+ps_nochloro_RA_glomF<- tax_glom(ps_nochloro_RA, 'Family')
+
+
+pyro <- subset_samples(ps_nochloro_RA_glomF, Project == "Pyro")
+pyro = filter_taxa(pyro, function(x) sum(x) > 1, TRUE)
+                       
+taxabarplot<-plot_bar(pyro, x= "SampleID", fill = "Family") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Family), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 30))+ xlab("")
+
+taxabarplot
+```
+
+
+
+```{r}
+
+pyroE <- subset_samples(pyro, SampleID %ni% c("L14_6283", "L15_6283" , "L17_6283", "L18_6283"))
+pyroE = filter_taxa(pyroE, function(x) sum(x) > 1, TRUE)
+                       
+taxabarplot<-plot_bar(pyroE, x= "SampleID", fill = "Family") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Family), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 30))+ xlab("")
+
+taxabarplot
+```
+
+
+
+
+```{r}
+#ps_nochloro_RA<- transform_sample_counts(ps_nochloro, function(OTU) 100* OTU/sum(OTU))
+#pyro <- subset_samples(ps_nochloro_RA, Project == "Pyro")
+#pyroE <- subset_samples(pyro, SampleID %ni% c("L14_6283", "L15_6283" , "L17_6283", "L18_6283"))
+#pyroE = filter_taxa(pyroE, function(x) sum(x) > 0, TRUE)
+
+
+                       
+taxabarplot<-plot_bar(pyroE, x= "SampleID", fill = "OTU") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=OTU), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 70))+ xlab("")
+
+taxabarplot + theme(legend.position = "none")
+```
+
+
+```{r}
+taxabarplot<-plot_bar(pyroE, x= "SampleID", fill = "OTU") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=OTU), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors, 100))+ xlab("")
+
+taxabarplot
+```
+sum up how much these OTUs amount to in each sample (99%? more?)
+
+
+```{r}
+pE_m <- psmelt(pyroE)
+```
+
+```{r}
+unique(pE_m$OTU)
+```
+
+1. **12a986d7ed4f3be699daa0feaba41d8a**
+o__Rhizobiales
+ f__Hyphomicrobiaceae
+ g__Filomicrobium
+ s__uncultured_Alphaproteobacteria
+
+>12a986d7ed4f3be699daa0feaba41d8a
+GCAGCAGTGGGGAATATTGGACAATGGGCGAAAGCCTGATCCAGCCATGCCGCGTGAGTGACGAAGGCCTTAGGGTTGTAAAACTCTTTTGGCGGGGACGATAATGACGGTACCCGCAGAATAAGCCCCGGCTAACTTCGTGCCAGCAGCCGCGGTAATACGAAGGGGGCTAGCGTTGTTCGGAATCACTGGGCGTAAAGCGCACGTAGGCGGACTGGTCAGTTGGGGGTGAAATCCCAGGGCTCAACCCTGGAACTGCCTCCAATACTGCCAGTCTTGAGTCCGAGAGAGGTGAGTGGAATTCCTAGTGTAGAGGTGAAATTCGTAGATATTAGGAAGAACACCAGTGGCGAAGGCGGCTCACTGGCTCGGTACTGACGCTGAGGTGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+
+uncultured sanger sequence from Mangrove Sediment in Hong Kong - GenBank: MH091208.1,  MH091199.1 (2 best hits, 100% )
+Diversity and dynamics of microbial community structure in
+            different mangrove, marine and freshwater sediments during
+            anaerobic debromination of PBDEs
+            
+Diversity of salt marsh prokaryotes, M.A. Moran, uncultured Hyphomicrobiaceae bacterium -  lon=81.2797W, lat=31.3884N; sediment
+                     14-16cm collected on Feb 01, 2002, Sapelo Island Microbial
+                     Observatory Dean Creek Marsh sampling site" (3rd best hit 99%)    
+                     
+
+```{r}
+pE_m %>%  filter(OTU == "12a986d7ed4f3be699daa0feaba41d8a") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```
+
+
+4. **e0169d54945a8a584037e96365ec7bb3**
+ o__Rhizobiales
+ f__Hyphomicrobiaceae
+ g__Filomicrobium
+ s__uncultured_Alphaproteobacteria
+ 
+ >e0169d54945a8a584037e96365ec7bb3
+GCTGCAGTGGGGAATATTGGACAATGGGCGAAAGCCTGATCCAGCCATGCCGCGTGAGTGACGAAGGCCTTAGGGTTGTAAAACTCTTTTGGCGGGGACGATAATGACGGTACCCGCAGAATAAGCCCCGGCTAACTTCGTGCCAGCAGCCGCGGTAATACGAAGGGGGCTAGCGTTGTTCGGAATCACTGGGCGTAAAGCGCACGTAGGCGGACTGGTCAGTTGGGGGTGAAATCCCAGGGCTCAACCCTGGAACTGCCTCCAATACTGCCAGTCTTGAGTCCGAGAGAGGTGAGTGGAATTCCTAGTGTAGAGGTGAAATTCGTAGATATTAGGAAGAACACCAGTGGCGAAGGCGGCTCACTGGCTCGGTACTGACGCTGAGGTGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+ 
+ MH091208.1 uncultured bacteria - Diversity and dynamics of microbial community structure in
+            different mangrove, marine and freshwater sediments during
+            anaerobic debromination of PBDEs - isolation_source="mangrove sediments" in Hong Kong,  99%
+                      
+```{r}
+pE_m %>%  filter(OTU == "e0169d54945a8a584037e96365ec7bb3") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```
+
+6. **aa0c627da86b1ddbba980c9dfd6ac380**
+o__Rhizobiales
+ f__Hyphomicrobiaceae
+ g__Filomicrobium
+ s__uncultured_Alphaproteobacteria
+
+>aa0c627da86b1ddbba980c9dfd6ac380
+GCAGCAGTGGGGAATATTGGACAATGGGCGAAAGCCTGATCCAGCCATGCCGCGTGAGTGACGAAGGCCTTAGGGTTGTAAAACTCTTTTGGCGGGGACGATAATGACGGTACCCGCAGAATAAGCCCCGGCTAACTTCGTGCCAGCAGCCGCGGTAATACGAAGGGGGCTAGCGTTGTTCGGAATCACTGGGCGTAAAGCGCACGTAGGCGGACTGGTCAGTTGGGGGTGAAATCCCAGGGCTCAACCCTGGAACTGCCTCCAATACTGCCAGTCTTGAGTCCGAGAGAGGTGAGTGGAATTCCTAGTGTAGAGGTGAAATTCGTAGATATTAGGAAGAACACCAGTGGCGAAGGCGACTCACTGGCTCGGTACTGACGCTGAGGTGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+
+MH091208.1 uncultured bacteria - Diversity and dynamics of microbial community structure in
+            different mangrove, marine and freshwater sediments during
+            anaerobic debromination of PBDEs - Hong Kong isolation_source="mangrove sediments" , 99%
+            
+```{r}
+pE_m %>%  filter(OTU == "aa0c627da86b1ddbba980c9dfd6ac380") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```
+            
+9. **f6a0f1f2d2a083164d1fb145b000b96b**
+
+o__Rhizobiales
+ f__Hyphomicrobiaceae
+ g__Filomicrobium
+ s__uncultured_Alphaproteobacteria
+
+
+>f6a0f1f2d2a083164d1fb145b000b96b
+GCAGCAGTGGGGAATATTGGACAATGGGCGAAAGCCTGATCCAGCCATGCCGCGTGAGTGACGAAGGCCTTAGGGTTGTAAAACTCTTTTGGTGGGGACGATAATGACGGTACCCGCAGAATAAGCCCCGGCTAACTTCGTGCCAGCAGCCGCGGTAATACGAAGGGGGCTAGCGTTGTTCGGAATCACTGGGCGTAAAGCGCACGTAGGCGGACTGGTCAGTTGGGGGTGAAATCCCAGGGCTCAACCCTGGAACTGCCTCCAATACTGCCAGTCTTGAGTCCGAGAGAGGTGAGTGGAATTCCTAGTGTAGAGGTGAAATTCGTAGATATTAGGAAGAACACCAGTGGCGAAGGCGGCTCACTGGCTCGGTACTGACGCTGAGGTGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+ 
+MH091208.1 Uncultured bacteria Diversity and dynamics of microbial community structure in
+            different mangrove, marine and freshwater sediments during
+            anaerobic debromination of PBDEs - isolation_source="mangrove sediments" - 99%
+
+
+```{r}
+pE_m %>%  filter(OTU == "f6a0f1f2d2a083164d1fb145b000b96b") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```        
+            
+8. **ff08ec2d8a67e142bc459567275bb888**
+ o__Rhizobiales
+ f__Hyphomicrobiaceae
+ g__Filomicrobium
+ s__uncultured_Alphaproteobacteria
+ 
+ >ff08ec2d8a67e142bc459567275bb888
+GCAGCAGTGGGGAATATTGGACAATGGGCGAAAGCCTGATCCAGCCATGCCGCGTGAGTGACGAAGGCCTTAGGGTTGTAAAACTCTTTTGGCGGGGACGATAATGACGGTACCCGCAGAATAAGCCCCGGCTAACTTCGTGCCAGCAGCCGCGGTAATACGAAGGGGGCTAGCGTTGTTCGGAATCACTGGGCGTAAAGCGCACGTAGGCGGACTGGTCAGTTGGGGGTGAAATCCCAGGGCTCAACCCTGGAACTGCCTCCAATACTGCCAGTCTTGAGTCCGAGAGAGGTGACTGGAATTCCTAGTGTAGAGGTGAAATTCGTAGATATTAGGAAGAACACCAGTGGCGAAGGCGGCTCACTGGCTCGGTACTGACGCTGAGGTGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+ 
+MH091208.1 uncultured bacteria Diversity and dynamics of microbial community structure in
+            different mangrove, marine and freshwater sediments during
+            anaerobic debromination of PBDEs Hong Kong isolation_source="mangrove sediments" 99%
+            
+            
+EU488009.1 uncultured bacteria  Characterization of the lucinid bivalve-bacteria symbiotic system:
+            the significance of the geochemical habitat on bacterial symbiont
+            diversity and phylogeny isolation_source="siliciclastic sedment from Thalassia
+                     sea grass bed" 99%
+
+
+other marine sediments, estuary sediments 
+
+```{r}
+pE_m %>%  filter(OTU == "ff08ec2d8a67e142bc459567275bb888") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```  
+
+
+-----
+
+2. **07ae9a3ebf44d4a821d001debe7d9b0c**  
+  c__Acidimicrobiia
+ o__Microtrichales
+ f__uncultured
+ g__uncultured
+  NA
+
+>07ae9a3ebf44d4a821d001debe7d9b0c
+GCAGCAGTGGGGAATCTTGCGCAATGGGCGAAAGCCTGACGCAGCGACGCCGCGTGCGGGAAGACGGCCTTCGGGTTGTAAACCGCTTTCAGCAGGGACGAAATTGACGGTACCTGCAGAAGAAGCTCCGGCCAACTACGTGCCAGCAGCCGCGGTAAGACGTAGGGGGCGAGCGTTGTCCGGAATCATTGGGCGTAAAGGGCTCCTAGGTGGTTCAGTAAGTCGACTGTGAAAATCCAAGGCTCAACCTTGGGACGCCAGTCGATACTGCTGTGACTCGAGTTCGGTAGAGGAGTGTGGAATTCCTGGTGTAGCGGTGAAATGCGCAGATATCAGGAGGAACACCAACGGCGAAGGCAGCACTCTGGGCCGATACTGACACTGAAGAGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+
+KM840989.1 uncultured bacteria - Microbial diversity of indigenous bacteria in a 129I contaminated
+            groundwater plume at the Hanford Site, Washington - Sanger, isolation_source="iodine (I-129) contaminated
+                     groundwater" 100%
+                     
+HF558551.1 uncultured bacteria - Iron- and Sulphur- cycling bacteria mobilize copper in a multiple
+            extreme mine tailings in the Atacama Desert, Chile -  isolation_source="tailing material" -　100%
+            
+JQ427269.1 uncultured bacteria  - Bacterial diversity in an alkaline saline soil spiked with
+            anthracene, samger sequenced,  isolation_source="soil", 100%
+            
+JQ665390.1 uncultured actinobacterium, Diversity of unculturable Actinomycetes in coastal wetlands of the
+            Yellow River estuary, isolation_source="soil sample from coastal wetlands", 99%
+  
+  
+```{r}
+pE_m %>%  filter(OTU == "07ae9a3ebf44d4a821d001debe7d9b0c") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```          
+            
+ 5. **9b8accad19c30d7a69a6290553111166**
+ c__Acidimicrobiia
+ o__Microtrichales
+ f__uncultured
+ g__uncultured
+  NA
+  
+>9b8accad19c30d7a69a6290553111166
+GCTGCAGTGGGGAATCTTGCGCAATGGGCGAAAGCCTGACGCAGCGACGCCGCGTGCGGGAAGACGGCCTTCGGGTTGTAAACCGCTTTCAGCAGGGACGAAATTGACGGTACCTGCAGAAGAAGCTCCGGCCAACTACGTGCCAGCAGCCGCGGTAAGACGTAGGGGGCGAGCGTTGTCCGGAATCATTGGGCGTAAAGGGCTCCTAGGTGGTTCAGTAAGTCGACTGTGAAAATCCAAGGCTCAACCTTGGGACGCCAGTCGATACTGCTGTGACTCGAGTTCGGTAGAGGAGTGTGGAATTCCTGGTGTAGCGGTGAAATGCGCAGATATCAGGAGGAACACCAACGGCGAAGGCAGCACTCTGGGCCGATACTGACACTGAAGAGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+
+KM840989.1  uncultured bacteria - Microbial diversity of indigenous bacteria in a 129I contaminated
+            groundwater plume at the Hanford Site, Washington - isolation_source="iodine (I-129) contaminated
+                     groundwater" - 99%
+
+
+```{r}
+pE_m %>%  filter(OTU == "9b8accad19c30d7a69a6290553111166") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```                     
+    
+----- 
+
+
+3. **e9034a72595933ebd5c5df08eb4a08fc**
+o__Oceanospirillales
+ f__Alcanivoracaceae1
+ g__Alcanivorax
+ s__Alcanivorax_venustensis
+
+>e9034a72595933ebd5c5df08eb4a08fc
+GCAGCAGTGGGGAATCTTGGACAATGGGGGCAACCCTGATCCAGCCATGCCGCGTGTGTGAAGAAGGCCTTCGGGTTGTAAAGCACTTTCAGCAGGGAGGAAGGCTTACCCCTAATACGGGTGAGTACTTGACGTTACCTGCAGAAGAAGCACCGGCTAATTTCGTGCCAGCAGCCGCGGTAATACGAAAGGTGCAAGCGTTAATCGGAATTACTGGGCGTAAAGCGCGCGTAGGCGGTGTGTTAAGTCGGATGTGAAAGCCCAGGGCTCAACCTTGGAATTGCATCCGATACTGGCACGCTAGAGTGCAGTAGAGGGAGGTGGAATTTCCGGTGTAGCGGTGAAATGCGTAGAGATCGGAAGGAACACCAGTGGCGAAGGCGGCCTCCTGGACTGACACTGACGCTGAGGTGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+
+PP516259.1 organism="Alloalcanivorax venustensis" Exploration and conservation of bacterial community from the
+            Arabian Sea seamount isolation_source="Arabian Sea water", 100%
+            
+
+```{r}
+pE_m %>%  filter(OTU == "e9034a72595933ebd5c5df08eb4a08fc") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```   
+
+----
+
+
+
+
+7. **c02844d75d512c1510de7334b6687731**
+ o__Rhizobiales
+ f__Hyphomicrobiaceae
+ g__uncultured
+ s__uncultured_bacterium
+ 
+ >c02844d75d512c1510de7334b6687731
+GCAGCAGTGGGGAATATTGGACAATGGGCGAAAGCCTGATCCAGCCATGCCGCGTGAGTGACGAAGGCCTTAGGGTTGTAAAGCTCTTTTGGCGGGGAAGATAATGACGGTACCCGCAGAATAAGCTCCGGCTAACTTCGTGCCAGCAGCCGCGGTAATACGAAGGGAGCTAGCGTTGTTCGGAATCACTGGGCGTAAAGCGCACGTAGGCGGATTTGTTAGTCAGGGGTGAAATCCCGGGGCTCAACCCCGGAACTGCCTTTGATACTGCAAATCTCGAGTCCGAGAGAGGTGGGTGGAATTCCTAGTGTAGAGGTGAAATTCGTAGATATTAGGAAGAACACCGGTGGCGAAGGCGGCCCACTGGCTCGGTACTGACGCTGAGGTGCGAAAGCGTGGGGAGCAAACAGGATTAGATAC
+
+
+OK235762.1 Uncultured Pedomicrobium sp.  isolation_source="date palm rhizosphere soil" Saudi Arabia - 99%
+
+HQ697761.1 Uncultured bacteria isolation_source="hydrocarbon contaminated saline-alkali
+                     soil" China - 99%
+                     
+                     
+99% to several other contaminated soil sites (real and experimental)
+
+ KP098952.1 Uncultured bacteria - The microbiome of methanol-utilizing denitrification systems
+            contains new bacterial groups - isolation_source="denitrification bioreactor" - 99%
+
+
+```{r}
+pE_m %>%  filter(OTU == "c02844d75d512c1510de7334b6687731") %>%  summarize(mean = mean(Abundance), min = min(Abundance), max = max(Abundance))
+```  
+
+
+## pyro for poster
+
+
+```{r}
+#### Order
+
+ps_nochloro_RA<- transform_sample_counts(ps_nochloro, function(OTU) 100* OTU/sum(OTU))
+
+ps_nochloro_RA_glomO<- tax_glom(ps_nochloro_RA, 'Order')
+
+```
+
+
+Pyro 
+```{r}
+
+sunken <- c("#4A0404", "#ECFFDC",  "darkolivegreen3","#264F2B", "#F4D153" ,"#FBF1E5", "#EFB8C1", "#A95C68","lightsalmon2"   , "#1BAAE2" ,"#147BA3", "grey") 
+pyro <- subset_samples(ps_nochloro_RA_glomO, Project == "Pyro")
+pyro <-  subset_samples(pyro, Treatment != "AB")
+pyro = filter_taxa(pyro, function(x) sum(x) > 1, TRUE)
+                       
+taxabarplot<-plot_bar(pyro, x= "TreatRep", fill = "Order") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Order), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90))  + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( sunken, 30))+ xlab("") + facet_grid(Notes_Filter ~ Treatment, scales = "free" )
+
+taxabarplot #+ theme(legend.position = "none")
+```
+ggsave("pyro_barplot.pdf", width = 6, height = 4)
+put 1003 at the end ( on the right? )  - or separate? 
+
+
+!!! DO Alpha Diversity the same way!! 
+
+
+#### For presentation: 
+
+```{r}
+pyro <- subset_samples(ps_nochloro_RA_glomO, Project == "Pyro")
+pyro <-  subset_samples(pyro, Treatment != "AB")
+pyro = filter_taxa(pyro, function(x) sum(x) > 1, TRUE)
+pyro <- subset_samples(pyro, Treatment %in% c("1003", "Replete") & TreatRep %in% c("1003_1", "1_2"))
+                       
+taxabarplot<-plot_bar(pyro, x= "TreatRep", fill = "Order") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Order), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90))  + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( sunken, 30))+ xlab("") + facet_grid(Notes_Filter ~ Treatment, scales = "free" ) 
+
+taxabarplot #+ theme(legend.position = "bottom")
+```
+
+ggsave("Originals_4legend.pdf", width = 4, height = 6)
+
+###nanoPore  Results 
+Recruited Communities from OTB seawater
+```{r}
+sunken_OTB_Recruit <- c( "#ECFFDC",  "darkolivegreen3", "turquoise",'#63a375', "#264F2B", "#F7F4B7", "#F4D153",  "#CC9C3C" ,"lightsalmon2"  , "#1BAAE2" ,"#A699A9","#434582", "grey", "black") 
+```
+
+```{r}
+OTBwater_Recruit <- read.csv("OTBwaterrecruit_long_order_16s.csv")
+
+OTBwater_Recruit_RA<- OTBwater_Recruit %>% group_by(barcode) %>% mutate(sum= sum(count)) %>% ungroup() %>% mutate(RA= (count/sum)*100) %>% filter(treatment %in% c("-cobalamin", "replete"))
+
+OTBwater_Recruit_RA$order[OTBwater_Recruit_RA$RA < 1] <- "z< 1% abund."
+
+OTBwater_Recruit_RA$filter_size <- factor(OTBwater_Recruit_RA$filter_size, levels = c("10.0µm", "0.2µm"))
+
+OTBwater_Recruit_RA
+
+
+taxa_bar_plot <- ggplot(data=OTBwater_Recruit_RA, aes(x=treatment, y=RA, fill=order)) +
+  facet_grid(filter_size~., scales = "free") +
+  geom_bar(aes(), stat="identity", position="stack") + 
+  theme_classic() + theme(legend.position="bottom") + 
+  scale_fill_manual(values = rep(sunken_OTB_Recruit,2 )) + 
+  guides(fill=guide_legend(nrow=5)) + theme(legend.title =element_blank())
+
+taxa_bar_plot 
+```
+
+ggsave("OTBwater_recruited.pdf", width = 4, height = 6)
+
+Recruited communities from 1003
+```{r}
+sunken_IRL_Recruit <- c( "#ECFFDC",  "darkolivegreen3", '#63a375', "#264F2B","#EFB8C1",  "#CC9C3C" ,"lightsalmon2"  , "#1BAAE2" ,"#147BA3","#B5218E", "grey", "black") 
+```
+
+
+```{r}
+irl1003_Recruit <- read.csv("1003Longdata_recruit_order_8_11_24.csv")
+
+irl1003_Recruit_RA<- irl1003_Recruit %>% group_by(barcode) %>% mutate(sum= sum(count)) %>% ungroup() %>% mutate(RA= (count/sum)*100) %>% filter(treatment %in% c("-cobalamin", "replete"))
+
+irl1003_Recruit_RA$order[irl1003_Recruit_RA$RA < 1] <- "z< 1% abund."
+
+irl1003_Recruit_RA$filter_size <- factor(irl1003_Recruit_RA$filter_size, levels = c("10.0µm", "0.2µm"))
+
+
+taxa_bar_plot_IRL <- ggplot(data=irl1003_Recruit_RA, aes(x=treatment, y=RA, fill=order)) +
+  facet_grid(filter_size~., scales = "free") +
+  geom_bar(aes(), stat="identity", position="stack") + 
+  theme_classic() + theme(legend.position="bottom") + 
+  scale_fill_manual(values = rep(sunken_IRL_Recruit,2 )) + 
+  guides(fill=guide_legend(nrow=5)) + theme(legend.title =element_blank())
+
+taxa_bar_plot_IRL 
+```
+
+ggsave("IRL1003_recruited.pdf", width = 4, height = 6)
+
+```{r}
+
+
+mergemelt<- psmelt(ps_colony_RA_glomO_F) 
+mergemelt$Order<-str_sub(mergemelt$Order, 5, str_length(mergemelt$Order))
+mergemelt$Order[mergemelt$Abundance < 1] <- "z< 1% abund."
+
+spatial_plot <- ggplot(data=mergemelt, aes(x=Name, y=Abundance, fill=Order)) + facet_grid(~ Year + Station, scales = "free")
+
+spatial_plot + geom_bar(aes(), stat="identity", position="stack") + 
+  theme_classic() + theme(legend.position="bottom") + scale_fill_manual(values =c( rep(colors30, 2))) + guides(fill=guide_legend(nrow=5)) + theme(legend.title =element_blank())
+```
+
+
+
+
+
+
+### ASV Richness
+
+```{r}
+
+pyro4richness <- subset_samples(ps_nochloro, Project == "Pyro")
+pyro4richness <-  subset_samples(pyro4richness, Treatment != "AB")
+
+
+totalOTU <- data.frame(otu_table(pyro4richness))
+totalOTU$rowsu <- rowSums(totalOTU)
+totalOTUnotzero <- totalOTU %>% filter(rowsu >1)
+dim(totalOTUnotzero)
+
+```
+
+
+```{r}
+plugin <- pyro4richness %>%
+            estimate_richness(measures = "Observed") %$% Observed
+Project <- pyro4richness %>% sample_data %$% Project
+TreatRep <- pyro4richness %>% sample_data %$% TreatRep
+Treatment <- pyro4richness %>% sample_data %$% Treatment
+Filter <-  pyro4richness %>% sample_data %$% Notes_Filter
+
+
+richness<- data.frame(plugin, Project, TreatRep, Treatment, Filter )
+names(richness) <- c("richness", "Project", "TreatRep", "Treatment", "Filter")
+
+
+richness %>%group_by(Project) %>% summarize(mean = mean(richness), min = min(richness), max = max(richness))
+
+```
+
+```{r}
+
+RichPlot<- richness %>% ggplot( aes(x=TreatRep, y=richness))+geom_point(size = 10, shape = "-") + theme_bw()  +ylab("Observed Richness") +ggtitle("")+ theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +xlab("") + facet_grid(Filter~Treatment, scales = "free")#+ limy(0, 90)
+
+RichPlot
+```
+
+```{r}
+plugin <-  pyro4richness  %>%
+            estimate_richness(measures = "Shannon") %$% Shannon
+Project <- pyro4richness %>% sample_data %$% Project
+TreatRep <- pyro4richness %>% sample_data %$% TreatRep
+Treatment <- pyro4richness %>% sample_data %$% Treatment
+Filter <-  pyro4richness %>% sample_data %$% Notes_Filter
+
+
+shannon<- data.frame(plugin, Project, TreatRep, Treatment, Filter )
+names(shannon) <- c("ShanIndex", "Project", "TreatRep", "Treatment", "Filter")
+
+shannon$Treatment <- factor(shannon$Treatment, levels = c("1003","B12_Thia","B12_Bio", "Replete"))
+
+#Factor treatments
+
+Shan_colors <- c("#CF9FFF","darkolivegreen3",  "cadetblue2", "#F4D153")
+
+shanPlot<-shannon %>%  ggplot( aes(x=Treatment, y=ShanIndex, fill = Treatment, shape = Filter))+geom_point(size = 3)  +ylab("Shannon Index") +ggtitle("")+ theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +xlab("") + scale_fill_manual(values = Shan_colors) + theme_classic() + scale_shape_manual(values = c(21,24)) #+ facet_grid(Filter~., scales = "free")
+
+shanPlot+ theme(legend.position = "none")
+```
+ggsave("pyro_alpha.pdf", width = 5, height = 4)
+
+```{r}
+shanPlot<-shannon %>% filter(Treatment %in% c("1003", "Replete")) %>%  ggplot( aes(x=Treatment, y=ShanIndex, fill = Treatment, shape = Filter)) +
+  geom_point(size = 3)  +ylab("Shannon Index") +ggtitle("")+ 
+  theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +
+  xlab("") + scale_fill_manual(values = c("#CF9FFF", "#F4D153")) + theme_classic() + scale_shape_manual(values = c(21,24)) #+ facet_grid(Filter~., scales = "free")
+
+shanPlot+ theme(legend.position = "none")
+```
+
+ggsave("ShannonPlot_4presentation.pdf", width = 3, height = 3)
+**PCoA**
+
+```{r}
+
+sunken <- c("#264F2B", "#FBF1E5", "#EFB8C1", "#9F662D", "#DF6A53", "#147BA3", "#F4D153")
+
+Pyro<- subset_samples(ps_nochloro, Project == "Pyro")
+Pyro<-  subset_samples(Pyro, Treatment != "AB")
+
+OTU4clr<- data.frame(t(data.frame(otu_table(Pyro))))
+row.names(OTU4clr) <- str_remove(row.names(OTU4clr), "X")
+row.names(OTU4clr) <- gsub("\\.", "-", row.names(OTU4clr))
+OTUs.clr <- codaSeq.clr(OTU4clr + 0.5, samples.by.row=TRUE)
+OTU2 <- otu_table(as.matrix(OTUs.clr), taxa_are_rows = FALSE)
+
+psCLR <- phyloseq(OTU2,TAX,META)
+
+ordu = ordinate(psCLR, "PCoA", "euclidean")
+
+p<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Treatment, shape = Notes_Filter), size =3)  + scale_shape_manual(values= c(21,24)) +scale_fill_manual(values=colors[-1]) +guides(fill = guide_legend(override.aes=list(shape=21)))
+p
+
+```
+
+```{r}
+Pyro<- subset_samples(ps_nochloro, Project == "Pyro")
+Pyro<-  subset_samples(Pyro, Treatment %ni% c("AB", "1003"))
+
+OTU4clr<- data.frame(t(data.frame(otu_table(Pyro))))
+row.names(OTU4clr) <- str_remove(row.names(OTU4clr), "X")
+row.names(OTU4clr) <- gsub("\\.", "-", row.names(OTU4clr))
+OTUs.clr <- codaSeq.clr(OTU4clr + 0.5, samples.by.row=TRUE)
+OTU2 <- otu_table(as.matrix(OTUs.clr), taxa_are_rows = FALSE)
+
+psCLR <- phyloseq(OTU2,TAX,META)
+
+ordu = ordinate(psCLR, "PCoA", "euclidean")
+
+p<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Treatment, shape = Notes_Filter), size =3)  + scale_shape_manual(values= c(21,24)) +scale_fill_manual(values=colors[-1]) +guides(fill = guide_legend(override.aes=list(shape=21)))
+p
+
+```
+
