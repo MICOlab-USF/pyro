@@ -200,6 +200,8 @@ taxabarplot<-plot_bar(pyro, x= "SampleID", fill = "Order") +  scale_y_continuous
 
 taxabarplot
 ```
+
+
 Blanks
 ```{r}
 
@@ -604,20 +606,6 @@ taxa_bar_plot_IRL
 ```
 
 ggsave("IRL1003_recruited.pdf", width = 4, height = 6)
-
-```{r}
-
-
-mergemelt<- psmelt(ps_colony_RA_glomO_F) 
-mergemelt$Order<-str_sub(mergemelt$Order, 5, str_length(mergemelt$Order))
-mergemelt$Order[mergemelt$Abundance < 1] <- "z< 1% abund."
-
-spatial_plot <- ggplot(data=mergemelt, aes(x=Name, y=Abundance, fill=Order)) + facet_grid(~ Year + Station, scales = "free")
-
-spatial_plot + geom_bar(aes(), stat="identity", position="stack") + 
-  theme_classic() + theme(legend.position="bottom") + scale_fill_manual(values =c( rep(colors30, 2))) + guides(fill=guide_legend(nrow=5)) + theme(legend.title =element_blank())
-```
-
 
 
 
